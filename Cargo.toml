@@ -10,8 +10,8 @@ repository = "https://github.com/heyitsanthony/aht10"
 version = "0.0.1"
 
 [dependencies]
-embedded-hal = "0.2.3"
+embedded-hal = "0.2.4"
 bitflags = "^1.1.0"
 
 [dev_dependencies]
-linux-embedded-hal = "0.2.2"
+linux-embedded-hal = "0.3.0"
