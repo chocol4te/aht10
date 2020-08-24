@@ -1,36 +1,23 @@
-//! A platform agnostic driver to interface with the AHT10 temperature and humidity sensor.
+//! A platform agnostic driver to interface with the AHT20 temperature and humidity sensor.
 //!
-//! This driver was built using [`embedded-hal`] traits.
-//!
-//! Unfortunately, the AHT10 datasheet is somewhat underspecified. There's a
-//! FIFO mode as well as command data bytes which are briefly mentioned, but
-//! I've found no documentation describing what they mean. Caveat emptor.
+//! This driver was built using [`embedded-hal`] traits, and is a fork of Anthony Romano's [AHT10 crate].
 //!
 //! [`embedded-hal`]: https://docs.rs/embedded-hal/~0.2
+//! [AHT10 crate]: https://github.com/heyitsanthony/aht10
 
 #![deny(missing_docs)]
 #![no_std]
 
-extern crate embedded_hal as hal;
-
-use hal::blocking::delay::DelayMs;
-use hal::blocking::i2c::{Write, WriteRead};
+use {
+    bitflags::bitflags,
+    crc_all::Crc,
+    embedded_hal::blocking::{
+        delay::DelayMs,
+        i2c::{Write, WriteRead},
+    },
+};
 
 const I2C_ADDRESS: u8 = 0x38;
-
-#[allow(dead_code)]
-#[allow(non_camel_case_types)]
-#[derive(Copy, Clone)]
-#[repr(u8)]
-enum Command {
-    Calibrate = 0b1110_0001,
-    GetRaw = 0b1010_1000,
-    GetCT = 0b1010_1100,
-    Reset = 0b1011_1010,
-}
-
-#[macro_use]
-extern crate bitflags;
 
 bitflags! {
     struct StatusFlags: u8 {
@@ -44,107 +31,149 @@ bitflags! {
     }
 }
 
-/// AHT10 Error
+/// AHT20 Error.
 #[derive(Debug, Copy, Clone)]
 pub enum Error<E> {
-    /// Device is not calibrated
-    Uncalibrated(),
+    /// Device is not calibrated.
+    Uncalibrated,
     /// Underlying bus error.
-    BusError(E),
+    Bus(E),
+    /// Checksum mismatch.
+    Checksum,
 }
 
 impl<E> core::convert::From<E> for Error<E> {
     fn from(e: E) -> Self {
-        Error::BusError(e)
+        Error::Bus(e)
     }
 }
 
-/// AHT10 driver
-pub struct AHT10<I2C, D> {
-    i2c: I2C,
-    delay: D,
-}
-
-/// Humidity reading from AHT10.
+/// Humidity reading from AHT20.
 pub struct Humidity {
     h: u32,
 }
+
 impl Humidity {
-    /// Humidity conveted to relative humidity.
+    /// Humidity converted to Relative Humidity %.
     pub fn rh(&self) -> f32 {
         100.0 * (self.h as f32) / ((1 << 20) as f32)
     }
+
     /// Raw humidity reading.
     pub fn raw(&self) -> u32 {
         self.h
     }
 }
 
-/// Temperature reading from AHT10.
+/// Temperature reading from AHT20.
 pub struct Temperature {
     t: u32,
 }
+
 impl Temperature {
-    /// Temperature converted to celsius.
+    /// Temperature converted to Celsius.
     pub fn celsius(&self) -> f32 {
         (200.0 * (self.t as f32) / ((1 << 20) as f32)) - 50.0
     }
+
     /// Raw temperature reading.
     pub fn raw(&self) -> u32 {
         self.t
     }
 }
 
-impl<I2C, D, E> AHT10<I2C, D>
+/// AHT20 driver.
+pub struct AHT20<I2C, D> {
+    i2c: I2C,
+    delay: D,
+}
+
+impl<I2C, D, E> AHT20<I2C, D>
 where
     I2C: WriteRead<Error = E> + Write<Error = E>,
     D: DelayMs<u16>,
 {
-    /// Creates a new AHT10 device from an I2C peripheral.
-    pub fn new(i2c: I2C, delay: D) -> Result<Self, E> {
-        let mut dev = AHT10 {
+    /// Creates a new AHT20 device from an I2C peripheral and a Delay.
+    pub fn new(i2c: I2C, delay: D) -> Result<Self, Error<E>> {
+        let mut dev = Self {
             i2c: i2c,
             delay: delay,
         };
-        dev.write_cmd(Command::GetRaw, 0)?;
-        dev.delay.delay_ms(300);
-        // MSB notes:
-        // Bit 2 set => temperature is roughly doubled(?)
-        // Bit 3 set => calibrated flag
-        // Bit 4 => temperature is negative? (cyc mode?)
-        dev.write_cmd(Command::Calibrate, 0x0800)?;
-        dev.delay.delay_ms(300);
+
+        dev.reset()?;
+
+        dev.calibrate()?;
+
         Ok(dev)
     }
 
-    /// Soft reset the sensor.
-    pub fn reset(&mut self) -> Result<(), E> {
-        self.write_cmd(Command::Reset, 0)?;
-        self.delay.delay_ms(20);
+    // Gets the sensor status.
+    fn status(&mut self) -> Result<StatusFlags, E> {
+        let buf = &mut [0u8; 1];
+        self.i2c.write_read(I2C_ADDRESS, &[0u8], buf)?;
+
+        Ok(StatusFlags { bits: buf[0] })
+    }
+
+    /// Self-calibrate the sensor.
+    pub fn calibrate(&mut self) -> Result<(), Error<E>> {
+        // Send calibrate command
+        self.i2c.write(I2C_ADDRESS, &[0xE1, 0x08, 0x00])?;
+
+        // Wait until not busy
+        while self.status()?.contains(StatusFlags::BUSY) {
+            self.delay.delay_ms(10);
+        }
+
+        // Confirm sensor is calibrated
+        if !self.status()?.contains(StatusFlags::CALIBRATION_ENABLE) {
+            return Err(Error::Uncalibrated);
+        }
+
         Ok(())
     }
 
-    /// Read humidity and temperature.
-    pub fn read(&mut self) -> Result<(Humidity, Temperature), Error<E>> {
-        let buf: &mut [u8; 7] = &mut [0; 7];
-        // Sort of reverse engineered the cmd data:
-        // Bit 0 -> temperature calibration (0 => +0.5C)
-        // Bit {1,2,3} -> refresh rate? (0 => slow refresh)
-        self.i2c
-            .write_read(I2C_ADDRESS, &[Command::GetCT as u8, 0b11111111, 0], buf)?;
-        let status = StatusFlags { bits: buf[0] };
-        if !status.contains(StatusFlags::CALIBRATION_ENABLE) {
-            return Err(Error::Uncalibrated());
-        }
-        let hum = ((buf[1] as u32) << 12) | ((buf[2] as u32) << 4) | ((buf[3] as u32) >> 4);
-        let temp = (((buf[3] as u32) & 0x0f) << 16) | ((buf[4] as u32) << 8) | (buf[5] as u32);
-        Ok((Humidity { h: hum }, Temperature { t: temp }))
+    /// Soft resets the sensor.
+    pub fn reset(&mut self) -> Result<(), E> {
+        // Send soft reset command
+        self.i2c.write(I2C_ADDRESS, &[0xBA])?;
+
+        // Wait 20ms as stated in specification
+        self.delay.delay_ms(20);
+
+        Ok(())
     }
 
-    fn write_cmd(&mut self, cmd: Command, dat: u16) -> Result<(), E> {
-        self.i2c.write(
-            I2C_ADDRESS,
-            &[cmd as u8, (dat >> 8) as u8, (dat & 0xff) as u8],
-        )
+    /// Reads humidity and temperature.
+    pub fn read(&mut self) -> Result<(Humidity, Temperature), Error<E>> {
+        // Send trigger measurement command
+        self.i2c.write(I2C_ADDRESS, &[0xAC, 0x33, 0x00])?;
+
+        // Wait until not busy
+        while self.status()?.contains(StatusFlags::BUSY) {
+            self.delay.delay_ms(10);
+        }
+
+        // Read in sensor data
+        let buf = &mut [0u8; 7];
+        self.i2c.write_read(I2C_ADDRESS, &[0u8], buf)?;
+
+        // Check for CRC mismatch
+        let mut crc = Crc::<u8>::new(49, 8, 0xFF, 0x00, false);
+        if crc.update(&buf[..=5]) != buf[6] {
+            return Err(Error::Checksum);
+        };
+
+        // Check calibration
+        let status = StatusFlags { bits: buf[0] };
+        if !status.contains(StatusFlags::CALIBRATION_ENABLE) {
+            return Err(Error::Uncalibrated);
+        }
+
+        // Extract humitidy and temperature values from data
+        let hum = ((buf[1] as u32) << 12) | ((buf[2] as u32) << 4) | ((buf[3] as u32) >> 4);
+        let temp = (((buf[3] as u32) & 0x0f) << 16) | ((buf[4] as u32) << 8) | (buf[5] as u32);
+
+        Ok((Humidity { h: hum }, Temperature { t: temp }))
     }
 }
