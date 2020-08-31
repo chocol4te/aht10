@@ -10,11 +10,12 @@
 
 use {
     bitflags::bitflags,
-    crc_all::Crc,
+    crc_all::CrcAlgo,
     embedded_hal::blocking::{
         delay::DelayMs,
         i2c::{Write, WriteRead},
     },
+    lazy_static::lazy_static,
 };
 
 const I2C_ADDRESS: u8 = 0x38;
@@ -146,6 +147,10 @@ where
 
     /// Reads humidity and temperature.
     pub fn read(&mut self) -> Result<(Humidity, Temperature), Error<E>> {
+        lazy_static! {
+            static ref CRC: CrcAlgo<u8> = CrcAlgo::<u8>::new(49, 8, 0xFF, 0x00, false);
+        }
+
         // Send trigger measurement command
         self.i2c.write(I2C_ADDRESS, &[0xAC, 0x33, 0x00])?;
 
@@ -159,8 +164,9 @@ where
         self.i2c.write_read(I2C_ADDRESS, &[0u8], buf)?;
 
         // Check for CRC mismatch
-        let mut crc = Crc::<u8>::new(49, 8, 0xFF, 0x00, false);
-        if crc.update(&buf[..=5]) != buf[6] {
+        let crc = &mut 0u8;
+        CRC.init_crc(crc);
+        if CRC.update_crc(crc, &buf[..=5]) != buf[6] {
             return Err(Error::Checksum);
         };
 
