@@ -1,6 +1,6 @@
 //! A platform agnostic driver to interface with the AHT20 temperature and humidity sensor.
 //!
-//! This driver was built using [`embedded-hal`] traits, and is a fork of Anthony Romano's [AHT10 crate].
+//! This driver was built using [`embedded-hal`] traits and is a fork of Anthony Romano's [AHT10 crate].
 //!
 //! [`embedded-hal`]: https://docs.rs/embedded-hal/~0.2
 //! [AHT10 crate]: https://github.com/heyitsanthony/aht10
@@ -84,12 +84,12 @@ impl Temperature {
 }
 
 /// AHT20 driver.
-pub struct AHT20<I2C, D> {
+pub struct Aht20<I2C, D> {
     i2c: I2C,
     delay: D,
 }
 
-impl<I2C, D, E> AHT20<I2C, D>
+impl<I2C, D, E> Aht20<I2C, D>
 where
     I2C: WriteRead<Error = E> + Write<Error = E>,
     D: DelayMs<u16>,
@@ -108,7 +108,7 @@ where
         Ok(dev)
     }
 
-    // Gets the sensor status.
+    /// Gets the sensor status.
     fn status(&mut self) -> Result<StatusFlags, E> {
         let buf = &mut [0u8; 1];
         self.i2c.write_read(I2C_ADDRESS, &[0u8], buf)?;

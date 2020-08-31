@@ -1,4 +1,4 @@
-//! Linux i2c demo
+//! Linux I2C Demo
 
 use {
     aht20::*,
@@ -16,7 +16,7 @@ fn main() {
 
     let i2c = hal::I2cdev::new(&args[1]).unwrap();
 
-    let mut dev = AHT20::new(i2c, hal::Delay).unwrap();
+    let mut dev = Aht20::new(i2c, hal::Delay).unwrap();
 
     loop {
         let (h, t) = dev.read().unwrap();
