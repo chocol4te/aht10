@@ -1,31 +1,18 @@
-# `AHT10`
+# `AHT20`
 
-An embedded rust `no_std` driver for the AHT10 temperature and humidity sensor.
+> An embedded rust `no_std` driver for the AHT20 temperature and humidity sensor, forked from Anthony Romano's [AHT10 crate](https://github.com/heyitsanthony/aht10).
+
+[![crates.io](https://img.shields.io/crates/v/aht20.svg)](https://crates.io/crates/aht20)
+[![docs.rs](https://docs.rs/aht20/badge.svg)](https://docs.rs/aht20/)
 
 ## Usage
 
-Include [library](https://crates.io/crates/aht10) as a dependency in your Cargo.toml:
-
-```
-[dependencies.aht10]
-version = "<version>"
-```
-
-To use the sensor, call `AHT10::new` with an embedded-hal i2c device:
-```rust
-extern crate aht10;
-
-// Start the sensor.
-let mut dev = AHT10::new(i2c_dev, embedded_hal::Delay).unwrap();
-// Read humidity and temperature.
-let (h, t) = dev.read().unwrap();
-```
+See an example using `linux-embedded-hal` in `examples/aht20.rs`.
 
 ## Documentation
 
-API documentation is generated on [docs.rs](https://docs.rs/aht10).
+API documentation is generated on [docs.rs](https://docs.rs/aht20).
 
 ## License
 
 Licensed under AGPL-3.0.
-
