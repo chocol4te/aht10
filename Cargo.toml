@@ -15,6 +15,7 @@ embedded-hal = "0.2"
 bitflags = "1.2"
 crc_all = "0.2"
 lazy_static = { version = "1.4", features = ["spin_no_std"] }
+nb = "1.0"
 
 [dev_dependencies]
 linux-embedded-hal = "0.3"
