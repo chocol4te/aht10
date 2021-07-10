@@ -32,6 +32,10 @@ bitflags! {
     }
 }
 
+lazy_static! {
+    static ref CRC: CrcAlgo<u8> = CrcAlgo::<u8>::new(49, 8, 0xFF, 0x00, false);
+}
+
 /// AHT20 Error.
 #[derive(Debug, Copy, Clone)]
 pub enum Error<E> {
@@ -147,10 +151,6 @@ where
 
     /// Reads humidity and temperature.
     pub fn read(&mut self) -> Result<(Humidity, Temperature), Error<E>> {
-        lazy_static! {
-            static ref CRC: CrcAlgo<u8> = CrcAlgo::<u8>::new(49, 8, 0xFF, 0x00, false);
-        }
-
         // Send trigger measurement command
         self.i2c.write(I2C_ADDRESS, &[0xAC, 0x33, 0x00])?;
 
@@ -159,6 +159,30 @@ where
             self.delay.delay_ms(10);
         }
 
+        self.read_helper()
+    }
+
+    /// Start a non-blocking read.
+    pub fn nonblocking_start(&mut self) -> Result<(), Error<E>> {
+        // Send trigger measurement command
+        self.i2c.write(I2C_ADDRESS, &[0xAC, 0x33, 0x00])?;
+        Ok(())
+    }
+
+    /// Read the result of a non-blocking read.
+    ///
+    /// The read must be previously started with [`nonblocking_start`]. Will
+    /// return `nb::Error::WouldBlock` if the result is not ready yet.
+    pub fn nonblocking_get_result(&mut self) -> Result<(Humidity, Temperature), nb::Error<Error<E>>> {
+        if self.status().map_err(|e| nb::Error::Other(e.into()))?.contains(StatusFlags::BUSY) {
+            return Err(nb::Error::WouldBlock);
+        }
+
+        self.read_helper().map_err(nb::Error::Other)
+    }
+
+    /// Read a value from the sensor. Assumes that a read is ready.
+    fn read_helper(&mut self) -> Result<(Humidity, Temperature), Error<E>> {
         // Read in sensor data
         let buf = &mut [0u8; 7];
         self.i2c.write_read(I2C_ADDRESS, &[0u8], buf)?;
@@ -176,7 +200,7 @@ where
             return Err(Error::Uncalibrated);
         }
 
-        // Extract humitidy and temperature values from data
+        // Extract humidity and temperature values from data
         let hum = ((buf[1] as u32) << 12) | ((buf[2] as u32) << 4) | ((buf[3] as u32) >> 4);
         let temp = (((buf[3] as u32) & 0x0f) << 16) | ((buf[4] as u32) << 8) | (buf[5] as u32);
 
